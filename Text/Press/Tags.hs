@@ -36,7 +36,7 @@ blockTag name rest = do
         tmpl {tmplBlocks = insert blockName nodes (tmplBlocks tmpl)})
     return $ Just $ Tag "block" $ TagFunc $ showBlock blockName
 
--- This is mapping of all of the default tag types. 
+-- This is mapping of all of the default tag types.
 defaultTagTypes = (fromList [
     ("extends", TagType extendsTag),
     ("block", TagType blockTag),
@@ -46,7 +46,7 @@ defaultTagTypes = (fromList [
     ])
 
 -- Comment Tag
-commentTag name rest = do 
+commentTag name rest = do
     manyTill pNode (tagNamed "endcomment")
     return Nothing
 

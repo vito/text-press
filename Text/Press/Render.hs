@@ -9,35 +9,50 @@ import Data.Maybe (listToMaybe, catMaybes)
 import Prelude hiding (lookup)
 import Data.List hiding (lookup)
 
-import Text.JSON.Types 
+import Text.JSON.Types
 import Text.JSON
+
+import Text.XHtml.Strict (stringToHtmlString)
 
 import Text.Press.Types
 
 emit s = tell [s]
 
-instance Render Node where 
+data EscapedJS = E JSValue
+               deriving (Eq, Show)
+
+instance Render Node where
     render (Text s) = emit s
-    render (Var var) = do
+    render (HtmlVar var) = do
         context <- getRenderState
         case lookupVar var context of
             Nothing -> emit ""
             Just jsval -> render jsval
-    render (Tag _ f) = render f 
+    render (Var var) = do
+        context <- getRenderState
+        case lookupVar var context of
+            Nothing -> emit ""
+            Just jsval -> render (E jsval)
+    render (Tag _ f) = render f
 
 instance Render TagFunc where
-    render (TagFunc f) = f 
+    render (TagFunc f) = f
 
-instance Render JSValue where 
+instance Render JSValue where
     render JSNull = emit ""
     render (JSString x) = emit $ fromJSString x
     render other = emit $ (showJSValue other) ""
 
-lookupVarM name = do 
-    st <- getRenderState 
+instance Render EscapedJS where
+    render (E JSNull) = emit ""
+    render (E (JSString x)) = emit $ stringToHtmlString $ fromJSString x
+    render (E other) = emit $ stringToHtmlString $ (showJSValue other) ""
+
+lookupVarM name = do
+    st <- getRenderState
     return $ lookupVar name st
 
-lookupVar name (RenderState {renderStateValues = vals}) = 
+lookupVar name (RenderState {renderStateValues = vals}) =
     listToMaybe . catMaybes $ map (getf name) vals
 
 split :: String -> String -> [String]
@@ -49,15 +64,15 @@ split tok splitme = unfoldr (sp1 tok) splitme
                                       drop (length p) s)
 
 getf name a = getf' names (Just a)
-    where 
-        names = split "." name 
+    where
+        names = split "." name
         getf' [] y = y
         getf' x Nothing = Nothing
         getf' (x : xs) obj@(Just (JSObject a)) = getf' xs $ get_field a x
-        getf' x y = Nothing    
+        getf' x y = Nothing
 
 -- Show a block
-showBlock :: String -> RenderT_ 
+showBlock :: String -> RenderT_
 showBlock blockName = do
     templates <- templateStack
     let maybeNodes = lookupFirst blockName $ map tmplBlocks $ templates
@@ -66,11 +81,11 @@ showBlock blockName = do
         Nothing -> tell [""]
 
 lookupFirst :: Ord k => k -> [Map k a] -> Maybe a
-lookupFirst name maps = listToMaybe . catMaybes $ map (lookup name) maps 
+lookupFirst name maps = listToMaybe . catMaybes $ map (lookup name) maps
 
 getTemplate = fmap renderStateTemplate getRenderState
 
-templateStack = getTemplate >>= templateStack' 
+templateStack = getTemplate >>= templateStack'
     where
         templateStack' t@(Template {tmplExtends=Nothing}) = return [t]
         templateStack' t@(Template {tmplExtends=Just name}) = do
@@ -81,12 +96,12 @@ templateStack = getTemplate >>= templateStack'
                     return $ t : (template : templates)
                 Nothing -> throwError $ PressError $ "expecting a template in the cache named: " ++ (show name)
 
-doRender = do 
+doRender = do
     bodyNodes <- fmap (tmplNodes . last) templateStack
     mapM render bodyNodes
 
 coerceJSToBool :: JSValue -> Bool
-coerceJSToBool JSNull = False 
+coerceJSToBool JSNull = False
 coerceJSToBool (JSBool bool) = bool
 coerceJSToBool (JSRational sign r) = (not sign) && (r > 0)
 coerceJSToBool (JSString x) = length (fromJSString x) > 0

@@ -4,38 +4,39 @@ import Data.Char (isSpace)
 import Data.Either (Either(..))
 import Data.Map (fromList, Map, lookup, insert)
 import Data.Maybe (catMaybes, listToMaybe)
+import Data.List (intercalate)
 import Prelude hiding (lookup)
 
 import qualified Text.Parsec as Parsec
 import qualified Text.Parsec.Error as Parsec.Error
 import Text.Parsec.Char (string, anyChar, space, alphaNum, letter, oneOf)
 import Text.Parsec.String (parseFromFile)
-import Text.Parsec.Combinator (manyTill, many1, notFollowedBy, choice, eof, lookAhead, optional, sepEndBy)
+import Text.Parsec.Combinator (manyTill, many1, notFollowedBy, choice, eof, lookAhead, optional, sepBy1, sepEndBy)
 import Text.Parsec.Pos (SourcePos, sourceName)
 import Text.Parsec.Prim ((<|>), try, Parsec, getPosition, getState)
 import qualified Text.Parsec.Prim as Parsec.Prim
 
 import Text.Press.Types
-import Text.Press.Render 
+import Text.Press.Render
 
 skipMany p = scan
     where scan = (p >> scan) <|> return ()
 
-intermediateParser = manyTill intermediate eof 
-    
-intermediate = choice [try parseTag, try parseVar, someText]
+intermediateParser = manyTill intermediate eof
 
-someText = withPos $ fmap PText someText' 
-    where someText' = (choice [check $ string "{{", check $ string "{%", check eof]) <|> succ
+intermediate = choice [try parseTag, try parseHtmlVar, try parseVar, someText]
+
+someText = withPos $ fmap PText someText'
+    where someText' = (choice [check $ string "{", check $ string "{{", check $ string "{%", check eof]) <|> succ
           check p = (lookAhead $ try p) >> return []
-          succ = do 
+          succ = do
             c <- anyChar
             xs <- someText'
             return $ c : xs
 
 between left right = string left >> manyTill anyChar (string right)
 
-withPos action = do 
+withPos action = do
     p <- getPosition
     result <- action
     return (result, p)
@@ -46,19 +47,21 @@ parseTag = withPos $ do
     name <- identifier
     skipMany space
     rest <- manyTill anyChar (string "%}")
-    return $ PTag name rest 
-    where 
+    return $ PTag name rest
+    where
 
-identifier = do 
+identifier = do
     l <- choice [letter, oneOf "_"]
     s <- Parsec.Prim.many (choice [alphaNum, oneOf "_"])
     return (l:s)
+
+parseHtmlVar = withPos $ fmap PHtmlVar $ between "{{{" "}}}"
 
 parseVar = withPos $ fmap PVar $ between "{{" "}}"
 
 parseFile :: Parser -> String -> IO (Either Parsec.ParseError Template)
 parseFile parser filename = do
-    eitherTokens <- parseFromFile intermediateParser filename    
+    eitherTokens <- parseFromFile intermediateParser filename
     return $ case eitherTokens of
                 Left err -> Left err
                 Right tokens -> Parsec.Prim.runParser tokensToTemplate (parser, newTemplate) filename tokens
@@ -70,30 +73,35 @@ parseString parser string = do
         Right tokens -> Parsec.Prim.runParser tokensToTemplate (parser, newTemplate) "" tokens
 
 
-tokensToTemplate :: Parsec [(Token, SourcePos)] ParserState Template 
-tokensToTemplate = do 
-    nodes <- fmap catMaybes $ Parsec.Prim.many pNode 
+tokensToTemplate :: Parsec [(Token, SourcePos)] ParserState Template
+tokensToTemplate = do
+    nodes <- fmap catMaybes $ Parsec.Prim.many pNode
     (p, t) <- getState
     return $ t {tmplNodes=nodes}
 
-pNode = choice [pVar, pTag, pText]
+pNode = choice [pHtmlVar, pVar, pTag, pText]
+
+pHtmlVar = do
+    (PHtmlVar x, pos) <- htmlVar
+    return $ Just $ HtmlVar $ strip x
 
 pVar = do
-    (PVar x, pos) <- var 
+    (PVar x, pos) <- var
     return $ Just $ Var $ strip x
 
 pText = do
     (PText x, pos) <- text
-    return $ Just $ Text x 
+    return $ Just $ Text x
 
-pTag = do 
+pTag = do
     ((PTag name rest), pos) <- tag
     (parser, _) <- getState
-    case lookup name (parserTagTypes parser) of 
+    case lookup name (parserTagTypes parser) of
         Nothing -> fail ("unknown tag: " ++ show name)
         Just (TagType t) -> t name rest
 
 token' x = Parsec.Prim.token (show . fst) (snd) x
+htmlVar = token' $ toMaybe $ isHtmlVar . fst
 var = token' $ toMaybe $ isVar . fst
 text = token' $ toMaybe $ isText . fst
 tag = token' $ toMaybe $ isTag . fst
@@ -101,6 +109,9 @@ tagNamed name = token' $ toMaybe $ (isTagNamed name) . fst
 tagNamedOneOf name = token' $ toMaybe $ (isTagNamedOneOf name) . fst
 
 toMaybe f tokpos = if (f tokpos) then Just tokpos else Nothing
+
+isHtmlVar (PHtmlVar _) = True
+isHtmlVar otherwise = False
 
 isVar (PVar _) = True
 isVar otherwise = False
@@ -122,7 +133,7 @@ strip = f . f
 handleParsecError e = error (show e)
 
 failWithParseError :: (Parsec.Prim.Stream s m t) => Parsec.Error.ParseError -> Parsec.Prim.ParsecT s u m a
-failWithParseError parseError = Parsec.Prim.ParsecT $ 
+failWithParseError parseError = Parsec.Prim.ParsecT $
     \s -> return $ Parsec.Prim.Empty $ return $ Parsec.Prim.Error parseError
 
 runSubParser parser state input = do
@@ -134,11 +145,11 @@ runSubParser parser state input = do
 spaces = many1 space
 
 runParseTagExpressions input = runSubParser parseTagExpressions () input
-    where parseTagExpressions = do 
+    where parseTagExpressions = do
               optional spaces
               exprs <- (choice [try pStr, try pVar]) `sepEndBy` spaces
-              return exprs 
+              return exprs
           pStr = fmap ExprStr $ between "\"" "\""
-          pVar = fmap ExprVar $ identifier
+          pVar = fmap (ExprVar . intercalate ".") $ (identifier `sepBy1` string ".")
 
 

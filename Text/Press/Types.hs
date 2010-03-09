@@ -1,7 +1,7 @@
-module Text.Press.Types where 
+module Text.Press.Types where
 
 import Control.Monad.Error (ErrorT, Error)
-import Control.Monad.Error.Class 
+import Control.Monad.Error.Class
 import Control.Monad.State (StateT, get, put)
 import Control.Monad.Trans (lift)
 import Control.Monad.Writer.Lazy (WriterT)
@@ -40,9 +40,10 @@ setRenderState = put
 data TagFunc = TagFunc RenderT_
 
 data Node = Var String
-    | Tag TagName TagFunc
-    | Text String
-    deriving (Show)
+          | HtmlVar String
+          | Tag TagName TagFunc
+          | Text String
+          deriving (Show)
 
 instance Show TagFunc where
     show s = "TagFunc ?"
@@ -54,9 +55,9 @@ data Template = Template {
     tmplBlocks :: Map String [Node],
     tmplNodes :: [Node],
     tmplFilename :: String
-} deriving (Show) 
+} deriving (Show)
 
-newTemplate = Template Nothing (fromList []) [] "" 
+newTemplate = Template Nothing (fromList []) [] ""
 
 type TagName = String
 type TemplateParser a = Prim.Parsec [(Token, SourcePos)] ParserState a
@@ -72,15 +73,16 @@ type ParserState = (Parser, Template)
 instance Show TagType where
     show s = "TagType ?"
 
-data Token = PText String 
+data Token = PText String
     | PTag TagName String
     | PVar String
+    | PHtmlVar String
     deriving (Ord, Show, Eq)
 
 data Parser = Parser {
     parserTagTypes :: Map TagName TagType,
     parserSearchPaths :: [String],
-    parserTemplateCache :: Map TemplatePath Template 
+    parserTemplateCache :: Map TemplatePath Template
 } deriving (Show)
 
 class Render a where
